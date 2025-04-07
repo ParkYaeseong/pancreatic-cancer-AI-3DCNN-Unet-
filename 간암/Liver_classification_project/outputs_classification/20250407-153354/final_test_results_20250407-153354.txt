@@ -1,0 +1,8 @@
+--- FINAL TEST SET PERFORMANCE (Best Model) ---
+Timestamp: 20250407-153354
+Best Model Path: ./Liver_classification_project\outputs_classification\20250407-153354\checkpoints\best_model_auc_20250407-153354.pth
+Best Model Epoch (based on validation): 36
+Test Set Average Loss: 0.5109
+Test Set ROC AUC: 0.9350
+Test Set Accuracy: 0.7500
+Test Set Size: 40
