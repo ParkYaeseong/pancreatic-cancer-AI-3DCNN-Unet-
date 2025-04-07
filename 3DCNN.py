@@ -67,7 +67,7 @@ TAR_CANCER_PATH = os.path.join(DRIVE_BASE_PATH, 'Task07_Pancreas.tar')
 ZIP_NORMAL_PATH = os.path.join(DRIVE_BASE_PATH, 't1.zip')
 
 # --- 작업 경로 ---
-WORK_DIR = os.path.join(BASE_PATH, 'pancreas_classification_project') # Updated project name
+WORK_DIR = os.path.join(BASE_PATH, 'pancreas_classification_project_v2') # Updated project name slightly
 EXTRACT_BASE_PATH = os.path.join(WORK_DIR, 'data')
 CANCER_EXTRACT_PATH = os.path.join(EXTRACT_BASE_PATH, 'Task07_Pancreas_extracted') # Renamed
 NORMAL_EXTRACT_PATH = os.path.join(EXTRACT_BASE_PATH, 't1_extracted') # Renamed
@@ -75,13 +75,13 @@ CANCER_EXPECTED_SUBFOLDER = "Task07_Pancreas"
 NORMAL_EXPECTED_SUBFOLDER = "t1"
 
 # --- MONAI 데이터 처리 파라미터 ---
-TARGET_SPACING = (1.5, 1.5, 2.0)    # Voxel Spacing (X, Y, Z) - From Colab
+TARGET_SPACING = (1.5, 1.5, 2.0)      # Voxel Spacing (X, Y, Z) - From Colab
 TARGET_SPATIAL_SHAPE = (96, 96, 96) # Resize shape (D, H, W) - From Colab
-HU_WINDOW = (-57, 164) # HU Windowing 
+HU_WINDOW = (-57, 164) # HU Windowing
 NUM_CLASSES = 1        # ** 변경: 이진 분류 (암=1, 정상=0)
 CACHE_DATASET = True
 CACHE_RATE = 1.0
-NUM_WORKERS = 4
+NUM_WORKERS = 4 # 멀티프로세싱 오류 시 0으로 변경
 IMAGE_KEY = "image"
 LABEL_KEY = "class_label" # ** 변경: 키 이름을 클래스 레이블로 변경
 IMAGE_SUBFOLDER = "imagesTr" # 이미지 파일 하위 폴더
@@ -90,7 +90,10 @@ IMAGE_SUBFOLDER = "imagesTr" # 이미지 파일 하위 폴더
 MAX_EPOCHS = 50 # 분류는 Segmentation보다 빠르게 수렴할 수 있으므로 줄여서 시작 가능
 BATCH_SIZE = 4 # 분류는 일반적으로 Segmentation보다 메모리를 적게 사용하므로 늘릴 수 있음 (GPU 메모리 확인 필요)
 LEARNING_RATE = 1e-4
-VALIDATION_SPLIT = 0.2
+# *** 변경: Train/Validation/Test 분할 비율 ***
+TEST_SPLIT = 0.15  # 전체 데이터 중 테스트 세트 비율 (e.g., 15%)
+VALIDATION_SPLIT = 0.15 # *나머지* 데이터 중 검증 세트 비율 (e.g., Test 15% 후 남은 85% 중 15% -> 전체의 약 12.75%)
+# ------------------------------------------
 RANDOM_STATE = 42
 BALANCE_DATA = True # 데이터 불균형 중요
 EARLY_STOPPING_PATIENCE = 10 # AUC 기준으로 조기 종료 patience
@@ -344,14 +347,17 @@ def plot_classification_history(log_file_path, save_dir):
     except Exception as e: print(f"  Error plotting history from log file: {e}"); traceback.print_exc()
 
 
-# 데이터 준비 및 분할 함수 (** 수정: 분류 작업에 맞게 변경 **)
+# 데이터 준비 및 분할 함수 (** 수정: 분류 작업 + 3-way split **)
 def prepare_classification_files(cancer_extract_root, normal_extract_root,
                                  cancer_expected_subfolder, normal_expected_subfolder,
                                  image_key="image", label_key="class_label", # Use label_key for class
                                  image_folder="imagesTr",
-                                 balance=True, test_size=0.2, random_state=42):
-    """암/정상 폴더에서 이미지 파일을 찾아 클래스 레이블과 함께 파일 리스트 생성 및 분할"""
-    print("\n--- Preparing Data Files for Classification ---")
+                                 balance=True,
+                                 test_split_ratio=0.15,   # Test set ratio from total
+                                 val_split_ratio=0.15,    # Validation set ratio from *remainder*
+                                 random_state=42):
+    """암/정상 폴더에서 이미지 파일 찾아 클래스 레이블과 함께 파일 리스트 생성 및 3-way 분할 (Train/Val/Test)"""
+    print("\n--- Preparing Data Files for Classification (3-way split) ---")
     all_files = []
     processed_counts = {'cancer': 0, 'normal': 0}
     skipped_counts = {'cancer': 0, 'normal': 0}
@@ -365,35 +371,38 @@ def prepare_classification_files(cancer_extract_root, normal_extract_root,
     print(f"  Normal Root: {normal_root_adj} (Exists: {os.path.isdir(normal_root_adj) if normal_root_adj else False})")
 
     # --- 데이터 파일 찾기 (암: 1, 정상: 0) ---
+    # find_images_with_label 함수는 이전과 동일하게 사용
     def find_images_with_label(root_dir, img_subfolder, class_val):
-        """주어진 루트와 하위 폴더에서 이미지 파일을 찾아 클래스 레이블과 함께 리스트 반환"""
-        file_list = []
-        count = 0
-        skipped = 0
-        if not root_dir:
-            print(f"  Skipping class {class_val}: Root directory is invalid.")
-            return file_list, count, skipped
+      """주어진 루트와 하위 폴더에서 이미지 파일을 찾아 클래스 레이블과 함께 리스트 반환"""
+      file_list = []
+      count = 0
+      skipped = 0
+      if not root_dir:
+          print(f"   Skipping class {class_val}: Root directory is invalid.")
+          return file_list, count, skipped
 
-        search_path = os.path.join(root_dir, img_subfolder)
-        print(f"  Searching for class {class_val} images in: {search_path}")
-        if not os.path.isdir(search_path):
-            print(f"  Warning: Image subfolder '{img_subfolder}' not found in '{root_dir}' for class {class_val}.")
-            return file_list, count, skipped
+      search_path = os.path.join(root_dir, img_subfolder)
+      print(f"   Searching for class {class_val} images in: {search_path}")
+      if not os.path.isdir(search_path):
+          print(f"   Warning: Image subfolder '{img_subfolder}' not found in '{root_dir}' for class {class_val}.")
+          return file_list, count, skipped
 
-        try:
-            for filename in os.listdir(search_path):
-                if filename.lower().endswith(('.nii', '.nii.gz')) and not filename.startswith('.'):
-                    img_path = os.path.join(search_path, filename)
-                    if os.path.isfile(img_path):
-                        file_list.append({image_key: img_path, label_key: class_val})
-                        count += 1
-                    else:
-                        skipped += 1
-        except Exception as e:
-            print(f"  Error finding images in '{search_path}': {e}")
-            skipped = len(os.listdir(search_path)) # Assume all failed if error during listing
-        print(f"  Found {count} images for class {class_val} (Skipped/Invalid: {skipped}).")
-        return file_list, count, skipped
+      try:
+          for filename in os.listdir(search_path):
+              if filename.lower().endswith(('.nii', '.nii.gz')) and not filename.startswith('.'):
+                  img_path = os.path.join(search_path, filename)
+                  if os.path.isfile(img_path):
+                      file_list.append({image_key: img_path, label_key: class_val})
+                      count += 1
+                  else:
+                      skipped += 1
+      except Exception as e:
+          print(f"   Error finding images in '{search_path}': {e}")
+          # 리스팅 중 에러 발생 시, 정확한 스킵 카운트 어려움
+          skipped = -1 # Indicate error during listing
+
+      print(f"   Found {count} images for class {class_val} (Skipped/Invalid: {'Error' if skipped == -1 else skipped}).")
+      return file_list, count, skipped
 
     # 암 데이터 (Class 1)
     cancer_files, processed_counts['cancer'], skipped_counts['cancer'] = find_images_with_label(
@@ -407,28 +416,24 @@ def prepare_classification_files(cancer_extract_root, normal_extract_root,
     )
     all_files.extend(normal_files)
 
-
-    # --- Summary and Data Splitting ---
+    # --- Summary and Data Balancing ---
     n_cancer = processed_counts['cancer']
     n_normal = processed_counts['normal']
     n_total = n_cancer + n_normal
 
-    print("\n--- Data Preparation Summary ---")
+    print("\n--- Initial Data Collection Summary ---")
     print(f"  Total valid image files found: {n_total}")
     print(f"    Cancer (Class 1): {n_cancer} (Skipped: {skipped_counts['cancer']})")
     print(f"    Normal (Class 0): {n_normal} (Skipped: {skipped_counts['normal']})")
 
     if n_total == 0:
         print("\nError: No valid data files collected. Cannot proceed.")
-        return [], []
+        return [], [], []
 
-    labels = [f[label_key] for f in all_files] # Get class labels (0 or 1)
-
-    # --- Data Balancing (Oversampling) ---
-    # (Oversampling logic remains the same, just uses 'class_label')
+    # --- Data Balancing (Oversampling) BEFORE Splitting ---
     if balance and n_cancer > 0 and n_normal > 0 and n_cancer != n_normal:
-        print(f"\nBalancing data via oversampling...")
-        # Separate files by class
+        print(f"\nBalancing data via oversampling before splitting...")
+        # (Oversampling logic is the same as before)
         cancer_files_list = [f for f in all_files if f[label_key] == 1]
         normal_files_list = [f for f in all_files if f[label_key] == 0]
 
@@ -449,45 +454,94 @@ def prepare_classification_files(cancer_extract_root, normal_extract_root,
         oversample_indices = rng.choice(n_minority, size=n_majority - n_minority, replace=True)
         oversampled_files = [minority_files[i] for i in oversample_indices]
 
-        all_files = majority_files + minority_files + oversampled_files
-        labels = [f[label_key] for f in all_files] # Update labels list
-        print(f"  Total files after balancing: {len(all_files)}")
-        print(f"  Balanced counts - Cancer: {sum(l==1 for l in labels)}, Normal: {sum(l==0 for l in labels)}")
+        all_files_balanced = majority_files + minority_files + oversampled_files
+        labels_balanced = [f[label_key] for f in all_files_balanced]
+        print(f"  Total files after balancing: {len(all_files_balanced)}")
+        print(f"  Balanced counts - Cancer: {sum(l==1 for l in labels_balanced)}, Normal: {sum(l==0 for l in labels_balanced)}")
+        files_to_split = all_files_balanced
     elif balance and (n_cancer == 0 or n_normal == 0):
         print("\nWarning: Cannot balance data - only one class has samples.")
+        files_to_split = all_files
     elif balance and n_cancer == n_normal:
-         print("\nData is already balanced.")
+        print("\nData is already balanced.")
+        files_to_split = all_files
     else:
         print("\nData balancing is disabled.")
+        files_to_split = all_files
 
-    # --- Data Splitting (Train/Validation) ---
-    # (Splitting logic remains the same, uses class labels for stratification)
-    print("\n--- Splitting Data (Train/Validation) ---")
-    train_files, val_files = [], []
-    if not all_files: print("  Error: No files to split."); return [], []
-    if test_size <= 0 or test_size >= 1 or len(all_files) < 2:
-        print("  Warning: Invalid validation_split size or too few samples. Using all data for training.")
-        train_files = all_files; val_files = []
-    else:
+    if not files_to_split:
+        print("Error: No files available after balancing/selection. Cannot split.")
+        return [], [], []
+
+    labels_to_split = [f[label_key] for f in files_to_split]
+
+    # --- Data Splitting (Train/Validation/Test) ---
+    print("\n--- Splitting Data (Train/Validation/Test) ---")
+    train_files, val_files, test_files = [], [], []
+
+    # ** Step 1: Split into (Train + Validation) and Test **
+    train_val_files, test_files = [], []
+    if test_split_ratio > 0 and len(files_to_split) >= 2 :
         try:
-            unique_labels, counts = np.unique(labels, return_counts=True)
-            can_stratify = len(unique_labels) >= 2 and all(c >= 2 for c in counts)
-            stratify_param = labels if can_stratify else None
-            split_type = "stratified" if can_stratify else "regular"
-            print(f"  Performing {split_type} split (Test Size: {test_size}, Random State: {random_state}).")
-            train_files, val_files = train_test_split(all_files, test_size=test_size, random_state=random_state, stratify=stratify_param)
-        except ValueError as e:
-            print(f"  Warning: Error during {split_type} split: {e}. Falling back to regular split.")
-            train_files, val_files = train_test_split(all_files, test_size=test_size, random_state=random_state, stratify=None)
+            unique_labels_split1, counts_split1 = np.unique(labels_to_split, return_counts=True)
+            can_stratify_split1 = len(unique_labels_split1) >= 2 and all(c >= 2 for c in counts_split1)
+            stratify_param_split1 = labels_to_split if can_stratify_split1 else None
+            split_type1 = "stratified" if can_stratify_split1 else "regular"
+            print(f"  Performing Step 1 ({split_type1} split): (Train+Val) / Test (Test Ratio: {test_split_ratio})")
 
-    print("\nSplitting complete:")
+            train_val_files, test_files = train_test_split(
+                files_to_split,
+                test_size=test_split_ratio,
+                random_state=random_state,
+                stratify=stratify_param_split1
+            )
+            print(f"    Test set size: {len(test_files)}")
+            print(f"    Remaining (Train+Val) size: {len(train_val_files)}")
+            if test_files: print(f"     Test Dist - Cancer (1): {sum(f[label_key]==1 for f in test_files)}, Normal (0): {sum(f[label_key]==0 for f in test_files)}")
+        except ValueError as e:
+            print(f"  Warning: Error during initial (Test) split ({split_type1}): {e}. Performing regular split.")
+            train_val_files, test_files = train_test_split(files_to_split, test_size=test_split_ratio, random_state=random_state, stratify=None)
+    else:
+        print("  Skipping Test split (ratio is 0 or not enough samples). Using all for Train+Val.")
+        train_val_files = files_to_split
+        test_files = []
+
+    # ** Step 2: Split (Train + Validation) into Train and Validation **
+    train_files, val_files = [], []
+    if val_split_ratio > 0 and len(train_val_files) >= 2:
+        labels_train_val = [f[label_key] for f in train_val_files]
+        try:
+            unique_labels_split2, counts_split2 = np.unique(labels_train_val, return_counts=True)
+            # Need at least 2 samples per class in the train_val set for stratification
+            can_stratify_split2 = len(unique_labels_split2) >= 2 and all(c >= 2 for c in counts_split2)
+            stratify_param_split2 = labels_train_val if can_stratify_split2 else None
+            split_type2 = "stratified" if can_stratify_split2 else "regular"
+            print(f"  Performing Step 2 ({split_type2} split): Train / Validation (Val Ratio from Remainder: {val_split_ratio})")
+
+            train_files, val_files = train_test_split(
+                train_val_files,
+                test_size=val_split_ratio, # Ratio applied to train_val_files
+                random_state=random_state,
+                stratify=stratify_param_split2
+            )
+            print(f"    Training set size: {len(train_files)}")
+            print(f"    Validation set size: {len(val_files)}")
+            if train_files: print(f"     Train Dist - Cancer (1): {sum(f[label_key]==1 for f in train_files)}, Normal (0): {sum(f[label_key]==0 for f in train_files)}")
+            if val_files: print(f"     Val Dist - Cancer (1): {sum(f[label_key]==1 for f in val_files)}, Normal (0): {sum(f[label_key]==0 for f in val_files)}")
+        except ValueError as e:
+            print(f"  Warning: Error during second (Validation) split ({split_type2}): {e}. Performing regular split.")
+            train_files, val_files = train_test_split(train_val_files, test_size=val_split_ratio, random_state=random_state, stratify=None)
+    else:
+        print("  Skipping Validation split (ratio is 0 or not enough samples in Train+Val). Using all Train+Val for Training.")
+        train_files = train_val_files
+        val_files = []
+
+    print("\n--- Final Data Split Summary ---")
     print(f"  Training files: {len(train_files)}")
     print(f"  Validation files: {len(val_files)}")
-    if train_files: print(f"    Training distribution - Cancer (1): {sum(f[label_key]==1 for f in train_files)}, Normal (0): {sum(f[label_key]==0 for f in train_files)}")
-    if val_files: print(f"    Validation distribution - Cancer (1): {sum(f[label_key]==1 for f in val_files)}, Normal (0): {sum(f[label_key]==0 for f in val_files)}")
+    print(f"  Test files: {len(test_files)}")
 
-    return train_files, val_files
-
+    return train_files, val_files, test_files
 
 # Activation 함수 반환 헬퍼 (이전과 동일)
 def get_activation(activation_type, negative_slope=0.01):
@@ -671,9 +725,9 @@ if __name__ == '__main__':
     if not unzip_success_cancer and not unzip_success_normal: raise RuntimeError("Failed to extract datasets.")
 
 
-    # --- 6.2. Preparing Data File List (** 변경: 분류용 함수 호출 **) ---
-    print("\n--- 6.2. Preparing and Splitting Data Files (for Classification) ---")
-    train_files, val_files = prepare_classification_files(
+    # --- 6.2. Preparing Data File List (** 변경: 분류용 함수 호출, 3-way **) ---
+    print("\n--- 6.2. Preparing and Splitting Data Files (Train/Validation/Test) ---")
+    train_files, val_files, test_files = prepare_classification_files( # Now returns 3 lists
         cancer_extract_root=CANCER_EXTRACT_PATH,
         normal_extract_root=NORMAL_EXTRACT_PATH,
         cancer_expected_subfolder=CANCER_EXPECTED_SUBFOLDER,
@@ -681,27 +735,29 @@ if __name__ == '__main__':
         image_key=IMAGE_KEY, label_key=LABEL_KEY,
         image_folder=IMAGE_SUBFOLDER,
         balance=BALANCE_DATA,
-        test_size=VALIDATION_SPLIT,
+        test_split_ratio=TEST_SPLIT,         # Pass test split ratio
+        val_split_ratio=VALIDATION_SPLIT,     # Pass validation split ratio (of remainder)
         random_state=RANDOM_STATE
     )
 
     if not train_files: raise ValueError("Failed to prepare training files.")
     if not val_files and VALIDATION_SPLIT > 0: print("Warning: Validation files list is empty.")
+    if not test_files and TEST_SPLIT > 0: print("Warning: Test files list is empty.")
 
 
     # --- 6.3. Creating MONAI Datasets and DataLoaders ---
     print("\n--- 6.3. Creating MONAI Datasets and DataLoaders ---")
-    # ... (Dataset/DataLoader creation logic largely same, but uses updated transforms) ...
-    train_ds, val_ds = None, None
-    train_loader, val_loader = None, None
+    train_ds, val_ds, test_ds = None, None, None
+    train_loader, val_loader, test_loader = None, None, None # Add test_loader
     try:
         if train_files:
             dataset_class = CacheDataset if CACHE_DATASET else Dataset
             cache_args = {'cache_rate': CACHE_RATE, 'num_workers': NUM_WORKERS} if CACHE_DATASET else {}
             print(f"Creating {dataset_class.__name__} for training...")
             train_ds = dataset_class(data=train_files, transform=train_transforms, **cache_args)
+            # Use num_workers=0 if CacheDataset is fully cached to avoid potential issues
             loader_num_workers = 0 if (CACHE_DATASET and CACHE_RATE == 1.0) else NUM_WORKERS
-            train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=loader_num_workers, pin_memory=torch.cuda.is_available(), collate_fn=list_data_collate) # Use MONAI collate
+            train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=loader_num_workers, pin_memory=torch.cuda.is_available(), collate_fn=list_data_collate)
             print(f"Training DataLoader created. Samples: {len(train_ds)}, Batches/Epoch: {len(train_loader)}")
 
         if val_files:
@@ -710,8 +766,18 @@ if __name__ == '__main__':
             val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS, pin_memory=torch.cuda.is_available(), collate_fn=list_data_collate)
             print(f"Validation DataLoader created. Samples: {len(val_ds)}, Batches/Epoch: {len(val_loader)}")
         else: print("No validation files, skipping validation dataset/loader creation.")
-    except Exception as e: print(f"Error creating MONAI datasets/dataloaders: {e}"); traceback.print_exc(); raise
 
+        # *** Add Test Dataset and DataLoader ***
+        if test_files:
+            print("Creating regular Dataset for testing...")
+            test_ds = Dataset(data=test_files, transform=val_transforms) # Use validation transforms (no augmentation)
+            test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS, pin_memory=torch.cuda.is_available(), collate_fn=list_data_collate)
+            print(f"Test DataLoader created. Samples: {len(test_ds)}, Batches/Epoch: {len(test_loader)}")
+        else: print("No test files, skipping test dataset/loader creation.")
+        # *************************************
+
+    except Exception as e: print(f"Error creating MONAI datasets/dataloaders: {e}"); traceback.print_exc(); raise
+    
 
     # --- (Optional) Visualize a sample (** 수정: 레이블 확인 **) ---
     if train_loader and len(train_loader)>0 :
@@ -1066,9 +1132,89 @@ if __name__ == '__main__':
         except Exception as e: print(f"Error loading or evaluating best model: {e}"); traceback.print_exc()
     else: print("  Best model checkpoint not found. Skipping evaluation.")
 
+# --- 6.8.1. Evaluating Best Model on **Test** Set (Final Performance) ---
+    print("\n--- 6.8.1. Evaluating Best Model on Independent Test Set ---")
+    if os.path.exists(BEST_MODEL_PATH) and test_loader: # Check if best model and test loader exist
+        print(f"  Loading best model for FINAL evaluation from: {BEST_MODEL_PATH}")
+        test_eval_model = None; gc.collect(); torch.cuda.empty_cache()
+        try:
+            checkpoint = torch.load(BEST_MODEL_PATH, map_location=DEVICE)
+            # --- Re-initialize model based on saved config or defaults ---
+            saved_config = checkpoint.get('config', {})
+            test_model_name = saved_config.get('model_name', MODEL_NAME)
+            test_num_classes = saved_config.get('num_classes', NUM_CLASSES)
+            test_channels = saved_config.get('classifier_channels', CLASSIFIER_CHANNELS)
+            test_fc_dims = saved_config.get('classifier_fc_dims', CLASSIFIER_FC_DIMS)
+            print(f"  Re-initializing model '{test_model_name}' for test evaluation.")
+            if test_model_name == "Simple3DClassifier":
+                 test_eval_model = Simple3DClassifier(in_channels=1, num_classes=test_num_classes, channels=test_channels, fc_dims=test_fc_dims)
+            else: raise ValueError(f"Unsupported model '{test_model_name}' in checkpoint for test eval.")
 
-    # --- 6.9. Predicting Sample (** 변경: 분류 결과 출력 **) ---
-    print("\n--- 6.9. Predicting on a Validation Sample ---")
+            test_eval_model.load_state_dict(checkpoint['model_state_dict'])
+            test_eval_model.to(DEVICE); test_eval_model.eval()
+            print("  Best model loaded successfully for testing.")
+
+            test_auc_metric = ROCAUCMetric()
+            test_loss_total = 0.0; test_steps = 0
+            test_y_pred_trans = []
+            test_y_true = []
+
+            test_pbar = tqdm(test_loader, desc="Evaluating on TEST SET", unit="batch", leave=True)
+            with torch.no_grad():
+                for test_batch_data in test_pbar:
+                    test_steps += 1
+                    test_images = test_batch_data[IMAGE_KEY].to(DEVICE)
+                    test_labels = test_batch_data[LABEL_KEY].to(DEVICE) # [B, 1] float
+                    if test_labels.shape[-1] != 1: test_labels = test_labels.unsqueeze(1)
+
+                    test_outputs = test_eval_model(test_images) # Logits [B, 1]
+                    t_loss = loss_function(test_outputs, test_labels); test_loss_total += t_loss.item()
+
+                    test_outputs_prob = torch.sigmoid(test_outputs)
+                    test_auc_metric(test_outputs_prob, test_labels) # Accumulate test AUC state
+
+                    test_outputs_binary = post_pred(test_outputs)
+                    test_y_pred_trans.extend(test_outputs_binary.cpu().numpy())
+                    test_y_true.extend(test_labels.cpu().numpy())
+                    test_pbar.set_postfix({"test_loss": f"{t_loss.item():.4f}"})
+
+            final_test_avg_loss = test_loss_total / test_steps
+            final_test_auc = test_auc_metric.aggregate().item()
+            final_test_acc = accuracy_score(np.array(test_y_true).flatten(), np.array(test_y_pred_trans).flatten())
+
+            print("\n--- **** FINAL TEST SET PERFORMANCE (Best Model) **** ---")
+            print(f"  Test Set Average Loss: {final_test_avg_loss:.4f}")
+            print(f"  Test Set ROC AUC: {final_test_auc:.4f}")
+            print(f"  Test Set Accuracy: {final_test_acc:.4f}")
+            print("--- ************************************************** ---")
+
+            # Optionally save test results to a file
+            try:
+                test_results_file = os.path.join(OUTPUT_DIR, f"final_test_results_{TIMESTAMP}.txt")
+                with open(test_results_file, 'w') as f:
+                    f.write("--- FINAL TEST SET PERFORMANCE (Best Model) ---\n")
+                    f.write(f"Timestamp: {TIMESTAMP}\n")
+                    f.write(f"Best Model Path: {BEST_MODEL_PATH}\n")
+                    f.write(f"Best Model Epoch (based on validation): {checkpoint.get('best_val_epoch', -1) + 1}\n")
+                    f.write(f"Test Set Average Loss: {final_test_avg_loss:.4f}\n")
+                    f.write(f"Test Set ROC AUC: {final_test_auc:.4f}\n")
+                    f.write(f"Test Set Accuracy: {final_test_acc:.4f}\n")
+                    f.write(f"Test Set Size: {len(test_loader.dataset)}\n")
+                print(f"  Final test results saved to: {test_results_file}")
+            except Exception as e:
+                print(f"  Warning: Could not save final test results to file: {e}")
+
+            del test_eval_model, checkpoint; gc.collect(); torch.cuda.empty_cache()
+
+        except Exception as e: print(f"Error loading or evaluating best model on test set: {e}"); traceback.print_exc()
+    elif not os.path.exists(BEST_MODEL_PATH):
+        print("  Skipping test set evaluation: Best model checkpoint not found.")
+    elif not test_loader:
+        print("  Skipping test set evaluation: Test data loader not available.")
+
+# --- 6.9. Predicting Sample (** Note: Still uses validation sample by default **) ---
+    print("\n--- 6.9. Predicting on a Validation Sample (Using Best Model) ---")
+    # (Keep the rest of section 6.9 as is, or modify to use test_loader if preferred)
     if os.path.exists(BEST_MODEL_PATH) and val_loader:
         print(f"  Loading best model again for prediction from: {BEST_MODEL_PATH}")
         pred_model = None; gc.collect(); torch.cuda.empty_cache()
