@@ -3,7 +3,7 @@
 
 # 3D 의료 영상 분석 프로젝트: 췌장암 및 간암 분할/분류
 
-![췌장 분할 결과 예시](assets/pancreas.png)
+![췌장 분할 결과 예시](assets/pancreas.gif)
 
 ## 1. 프로젝트 개요
 
