@@ -1,6 +1,4 @@
-
----
-
+```markdown
 # 3D 의료 영상 분석 프로젝트: 췌장암 및 간암 분할/분류
 
 ![췌장 분할 결과 예시](assets/pancreas.gif)
@@ -12,6 +10,7 @@
 * **췌장 분할 (Segmentation):** U-Net 아키텍처를 사용하여 CT 영상에서 췌장 영역을 분할합니다.
 * **췌장암 분류 (Classification):** 3D CNN 모델을 사용하여 췌장 CT 영상이 암을 포함하는지 여부를 분류합니다.
 * **간암 분류 (Classification):** 동일한 3D CNN 아키텍처를 사용하여 간 CT 영상의 암 여부를 분류합니다.
+* **3D 시각화:** 분할된 췌장과 종양 영역을 인터랙티브 3D 모델로 시각화하여 결과를 직관적으로 확인합니다.
 
 프로젝트는 데이터 전처리, 모델 학습, 평가, 결과 시각화 및 실제 샘플 예측에 이르는 전체 과정을 포함하며, PyTorch와 MONAI 라이브러리를 기반으로 구현되었습니다.
 
@@ -23,23 +22,28 @@
 * **학습 과정 로깅 및 시각화:** 학습 및 검증 손실, 그리고 각 작업에 맞는 평가지표(Dice, IoU, AUC, Accuracy)를 CSV 파일로 기록하고, 이를 Matplotlib을 통해 시각화합니다.
 * **체크포인트 저장 및 재학습:** 학습 중 주기적으로 최신 모델을 저장하고, 검증 성능이 가장 좋은 모델을 별도로 저장합니다. 이를 통해 학습을 중단했다가 이어서 진행할 수 있습니다.
 * **3-Way 데이터 분할:** 데이터를 학습(Train), 검증(Validation), 테스트(Test) 세트로 분할하여 모델 성능을 보다 객관적으로 평가합니다.
+* **인터랙티브 3D 시각화:** `plotly`와 `skimage`를 사용하여 분할된 췌장 및 종양 마스크를 3D 메쉬로 변환하고, 사용자가 직접 회전 및 확대/축소하며 결과를 확인할 수 있는 인터랙티브 HTML 파일로 저장합니다.
 
 ## 3. 프로젝트 구조
 
 ```
+
 pancreatic-cancer-AI-3DCNN-Unet/
-├── pancreas_project/                    # 췌장 분할 프로젝트 폴더
-│   ├── Unet.py                          # 췌장 분할 U-Net 모델 학습/평가 스크립트
-│   └── outputs/                         # 분할 모델 결과물 저장 폴더
+├── pancreas\_project/                    \# 췌장 분할 프로젝트 폴더
+│   ├── Unet.py                          \# 췌장 분할 U-Net 모델 학습/평가 스크립트
+│   └── outputs/                         \# 분할 모델 결과물 저장 폴더
 │       └── ... (로그, 체크포인트 등)
-├── pancreas_classification_project/     # 췌장암 분류 프로젝트 폴더
-│   ├── 3DCNN.py                         # 췌장암 분류 3D CNN 모델 학습/평가 스크립트
-│   └── outputs_classification/          # 분류 모델 결과물 저장 폴더
+├── pancreas\_classification\_project/     \# 췌장암 분류 프로젝트 폴더
+│   ├── 3DCNN.py                         \# 췌장암 분류 3D CNN 모델 학습/평가 스크립트
+│   └── outputs\_classification/          \# 분류 모델 결과물 저장 폴더
 │       └── ... (로그, 체크포인트 등)
-└── Liver_classification_project/        # 간암 분류 프로젝트 폴더
-    ├── 3DCNN.py                         # 간암 분류 3D CNN 모델 학습/평가 스크립트
-    └── outputs_classification/          # 분류 모델 결과물 저장 폴더
-        └── ... (로그, 체크포인트, 최종 결과 등)
+└── Liver\_classification\_project/        \# 간암 분류 프로젝트 폴더
+├── 3DCNN.py                         \# 간암 분류 3D CNN 모델 학습/평가 스크립트
+└── outputs\_classification/          \# 분류 모델 결과물 저장 폴더
+└── ... (로그, 체크포인트, 최종 결과 등)
+├── 3D\_UNet.ipynb                        \# 3D U-Net 모델 학습 및 테스트용 Jupyter Notebook
+└── 3D\_시각화.ipynb                      \# 학습된 모델로 추론 및 3D 시각화 결과를 생성하는 Jupyter Notebook
+
 ```
 
 ## 4. 설치 및 환경 설정
@@ -49,10 +53,12 @@ pancreatic-cancer-AI-3DCNN-Unet/
 * Python 3.8 이상
 * PyTorch
 * MONAI
-* `pip install -r requirements.txt` 명령어를 사용하여 필요한 라이브러리를 설치할 수 있습니다. (필요시 `requirements.txt` 파일 생성)
+* `pip install -r requirements.txt` 명령어를 사용하여 필요한 라이브러리를 설치할 수 있습니다.
 
 ```
+
 # requirements.txt 예시
+
 torch
 monai
 numpy
@@ -62,7 +68,10 @@ tqdm
 nibabel
 scikit-learn
 torchinfo
-```
+plotly
+scikit-image
+
+````
 
 ### 4.2. 데이터 준비
 
@@ -73,29 +82,29 @@ torchinfo
 
 2.  **폴더 구성:**
     * `pancreatic-cancer-AI-3DCNN-Unet` 폴더 내에 각 스크립트에서 요구하는 경로에 맞게 데이터를 위치시킵니다.
-    * 예를 들어 `간암/3DCNN.py` 스크립트의 경우, `C:/Users/21/Desktop/간암/` 경로에 `Task03_Liver.tar`와 `normal_Liver.zip` 파일을 위치시켜야 합니다.
+    * 예를 들어 `Unet.py` 스크립트의 경우, 지정된 `DRIVE_BASE_PATH` 경로에 `Task07_Pancreas.tar`와 `t1.zip` 파일이 위치해야 합니다.
 
     ```python
-    # 예시: 간암/3DCNN.py의 경로 설정 부분
-    DRIVE_BASE_PATH = 'C:/Users/21/Desktop/간암'
-    TAR_CANCER_PATH = os.path.join(DRIVE_BASE_PATH, 'Task03_Liver.tar')
-    ZIP_NORMAL_PATH = os.path.join(DRIVE_BASE_PATH, 'normal_Liver.zip')
+    # 예시: Unet.py의 경로 설정 부분
+    DRIVE_BASE_PATH = 'C:/Users/21/Desktop/췌장암'
+    TAR_CANCER_PATH = os.path.join(DRIVE_BASE_PATH, 'Task07_Pancreas.tar')
+    ZIP_NORMAL_PATH = os.path.join(DRIVE_BASE_PATH, 't1.zip')
     ```
 
 ## 5. 사용법
 
-### 5.1. 췌장 분할 (U-Net)
+### 5.1. 3D U-Net 췌장 분할 모델 학습
 
-1.  `pancreatic-cancer-AI-3DCNN-Unet/Unet.py` 파일의 `DRIVE_BASE_PATH`를 실제 데이터 위치에 맞게 수정합니다.
+1.  `3D_UNet.ipynb` 또는 `Unet.py` 파일의 `DRIVE_BASE_PATH`를 실제 데이터 위치에 맞게 수정합니다.
 2.  필요에 따라 배치 사이즈, 에포크 등 하이퍼파라미터를 조정합니다.
-3.  터미널에서 다음 명령어를 실행합니다.
+3.  Jupyter Notebook 셀을 순서대로 실행하거나, 터미널에서 다음 명령어를 실행합니다.
     ```bash
     python Unet.py
     ```
 
-### 5.2. 췌장암/간암 분류 (3D CNN)
+### 5.2. 3D CNN 췌장암/간암 분류 모델 학습
 
-1.  `pancreatic-cancer-AI-3DCNN-Unet/3DCNN.py` (췌장암) 또는 `pancreatic-cancer-AI-3DCNN-Unet/간암/3DCNN.py` (간암) 파일의 `DRIVE_BASE_PATH`를 실제 데이터 위치에 맞게 수정합니다.
+1.  `3DCNN.py` (췌장암) 또는 `간암/3DCNN.py` (간암) 파일의 `DRIVE_BASE_PATH`를 실제 데이터 위치에 맞게 수정합니다.
 2.  필요에 따라 하이퍼파라미터를 조정합니다.
 3.  터미널에서 해당 스크립트를 실행합니다.
     ```bash
@@ -106,25 +115,31 @@ torchinfo
     python 간암/3DCNN.py
     ```
 
+### 5.3. 3D 시각화 실행
+
+1.  학습된 U-Net 모델의 체크포인트 파일(`best_model_... .pth`)이 준비되어야 합니다.
+2.  `3D_시각화.ipynb` 파일의 `MODEL_PATH`와 `INPUT_CT_PATH`를 각각 학습된 모델 가중치 파일과 분석할 CT 영상 파일의 경로로 수정합니다.
+3.  Jupyter Notebook 셀을 실행하면, 췌장과 종양 영역이 분할된 인터랙티브 3D 플롯이 생성되고 지정된 경로에 HTML 파일로 저장됩니다.
+
 ## 6. 학습 결과
 
-### 6.1. 췌장 분할 (U-Net)
+### 6.1. 췌장 분할 (3D U-Net)
 
 U-Net 모델은 100 에포크 동안 학습되었으며, 검증 세트에서 Dice 점수와 IoU를 기준으로 성능을 평가했습니다.
 
-* **학습 로그 (20250404-171345):**
-    * 최종 에포크(99)에서 검증 Dice 점수는 약 0.588, IoU는 약 0.515를 기록했습니다.
-    * 학습 과정에서 Dice 점수가 꾸준히 상승하는 경향을 보였습니다.
+* **학습 로그 (20250405-151938):**
+    * 96번째 에포크에서 **최고 검증 Dice 점수 0.7062**를 달성했습니다.
+    * 최종 에포크(99)에서는 검증 Dice 점수 0.7031, IoU 0.6289를 기록했습니다.
 
-* **학습 로그 (20250407-114211):**
-    * 8 에포크 학습 후 검증 Dice 점수는 약 0.458을 기록했습니다.
+* **학습 로그 (20250404-171345):**
+    * 100 에포크 학습 후 검증 Dice 점수는 약 0.588, IoU는 약 0.515를 기록했습니다.
 
 ### 6.2. 췌장암 분류 (3D CNN)
 
 3D CNN 분류 모델은 검증 세트에서 AUC(Area Under the ROC Curve)와 정확도를 기준으로 평가되었습니다.
 
 * **학습 로그 (20250407-111555, 20250407-103406):**
-    * 10 에포크 학습 후, 검증 세트에서 AUC 1.0, 정확도 1.0을 달성했습니다. 이는 데이터셋이 비교적 작거나 분할이 쉬운 경우일 수 있습니다.
+    * 10 에포크 학습 후, 검증 세트에서 **AUC 1.0, 정확도 1.0**을 달성했습니다. 이는 데이터셋이 비교적 작거나 분할이 쉬운 경우일 수 있습니다.
 
 ### 6.3. 간암 분류 (3D CNN)
 
@@ -132,7 +147,6 @@ U-Net 모델은 100 에포크 동안 학습되었으며, 검증 세트에서 Dic
 
 * **학습 로그 (20250407-153354):**
     * 학습 과정에서 검증 AUC는 꾸준히 증가하여 35번째 에포크에서 0.853으로 최고점을 기록했습니다.
-    * 최종 모델은 36번째 에포크에서 저장되었습니다.
 
 * **최종 테스트 결과:**
     * **테스트 세트 AUC: 0.9350**
@@ -159,5 +173,7 @@ U-Net 모델은 100 에포크 동안 학습되었으며, 검증 세트에서 Dic
 * **NiBabel:** NIfTI (.nii, .nii.gz) 형식의 의료 영상 파일을 불러오고 처리하기 위해 MONAI 내부적으로 사용되었습니다.
 * **Pandas & NumPy:** 데이터 구조를 다루고, 특히 학습 로그(CSV)를 처리하며, 수치 연산을 위해 사용되었습니다.
 * **Matplotlib:** 학습 과정(손실, 평가지표)을 그래프로 시각화하고, 예측 결과를 이미지로 표시하는 데 사용되었습니다.
+* **Plotly & Scikit-image:** `marching_cubes` 알고리즘을 통해 3D 메쉬를 생성하고, 이를 인터랙티브한 3D 시각화로 구현하는 데 사용되었습니다.
 * **Tqdm:** 데이터 처리 및 모델 학습 과정의 진행 상황을 시각적으로 보여주는 데 사용되었습니다.
 * **torchinfo:** 모델의 구조와 파라미터 수를 요약하여 보여주는 데 사용되었습니다.
+````
